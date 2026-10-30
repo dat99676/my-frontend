@@ -24,7 +24,7 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
                         usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     // Dấu nháy đơn: để shell đọc biến, mật khẩu không bị ghép vào chuỗi lệnh
-                    sh 'docker build -t docker.io/$DOCKER_USER/$IMAGE_NAME:latest -t docker.io/$DOCKER_USER/$IMAGE_NAME:$BUILD_NUMBER ./backend'
+                    sh 'docker build -t docker.io/$DOCKER_USER/$IMAGE_NAME:latest -t docker.io/$DOCKER_USER/$IMAGE_NAME:$BUILD_NUMBER .
                 }
             }
         }
