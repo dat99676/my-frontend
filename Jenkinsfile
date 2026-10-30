@@ -20,13 +20,15 @@ pipeline {
         }
 
         stage('Docker Build') {
-            steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
-                        usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                    // Dấu nháy đơn: để shell đọc biến, mật khẩu không bị ghép vào chuỗi lệnh
-                    sh 'docker build -t docker.io/$DOCKER_USER/$IMAGE_NAME:latest -t docker.io/$DOCKER_USER/$IMAGE_NAME:$BUILD_NUMBER .
-                }
-            }
+    steps {
+        sh '''
+            docker build \
+                -t docker.io/quydat14/shop-frontend:latest \
+                -t docker.io/quydat14/shop-frontend:${BUILD_NUMBER} \
+                .
+        '''
+    }
+}
         }
 
         stage('Push Docker Hub') {
