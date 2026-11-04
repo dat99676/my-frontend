@@ -1,0 +1,31 @@
+# Chạy thử cả backend và cơ sở dữ liệu PostgreSQL ngay trên máy:
+#   docker compose up --build
+# Rồi mở http://localhost:8080/swagger
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: shop-db
+    environment:
+      - POSTGRES_USER=shop
+      - POSTGRES_PASSWORD=shop123
+      - POSTGRES_DB=shop
+    volumes:
+      - shop-data:/var/lib/postgresql/data
+    restart: always
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shop-backend
+    ports:
+      - "8080:8080"
+    environment:
+      - ConnectionStrings__DefaultConnection=Host=db;Database=shop;Username=shop;Password=shop123
+      - JWT_KEY=doi-thanh-chuoi-bi-mat-dai-hon-32-ky-tu-khi-dua-len-mang
+    depends_on:
+      - db
+    restart: always
+
+volumes:
+  shop-data:
