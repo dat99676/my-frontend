@@ -5,32 +5,109 @@ import type { ReactNode } from "react";
 import { initialProducts } from "./data";
 import type { Product } from "./data";
 
+// Địa chỉ backend. Có thể đổi bằng biến NEXT_PUBLIC_API_URL khi build.
+export const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "https://shop-quydat.onrender.com").replace(/\/$/, "");
+
 export type Role = "admin" | "user";
 export type User = { username: string; role: Role };
 export type CartLine = { id: number; qty: number };
 export type Order = { id: string; user: string; total: number; count: number; date: string };
 
-// Tài khoản mẫu để học và thử nghiệm. Đây chỉ là giao diện, chưa có máy chủ kiểm tra thật.
-export const ACCOUNTS: { username: string; password: string; role: Role }[] = [
-  { username: "admin", password: "admin123", role: "admin" },
-  { username: "user", password: "user123", role: "user" },
-];
+type ApiProduct = {
+  id: number;
+  name: string;
+  price: number;
+  category: string;
+  emoji: string;
+  color: string;
+  stock: number;
+  description: string;
+  image?: string | null;
+};
+type ApiOrder = { code: string; username: string; total: number; count: number; createdAt: string };
+type AuthReply = { token: string; user: User };
+type ErrorReply = { error?: string };
+
+type ApiResult<T> = { ok: boolean; status: number; data: T | null };
+
+async function api<T>(path: string, method = "GET", body?: unknown, token?: string): Promise<ApiResult<T>> {
+  try {
+    const res = await fetch(API_URL + path, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: "Bearer " + token } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await res.text();
+    let data: T | null = null;
+    if (text) {
+      try {
+        data = JSON.parse(text) as T;
+      } catch {
+        data = null;
+      }
+    }
+    return { ok: res.ok, status: res.status, data };
+  } catch {
+    return { ok: false, status: 0, data: null };
+  }
+}
+
+function errorText(r: ApiResult<unknown>, fallback: string): string {
+  if (r.status === 0) {
+    return "Không kết nối được máy chủ. Máy chủ miễn phí có thể đang ngủ, hãy đợi khoảng 1 phút rồi thử lại.";
+  }
+  if (r.status === 401 || r.status === 403) {
+    return "Phiên đăng nhập đã hết hạn hoặc bạn không có quyền. Hãy đăng nhập lại.";
+  }
+  const msg = (r.data as ErrorReply | null)?.error;
+  return msg ?? fallback + " (mã " + r.status + ")";
+}
+
+function toProduct(p: ApiProduct): Product {
+  return {
+    id: p.id,
+    name: p.name,
+    price: p.price,
+    category: p.category,
+    emoji: p.emoji,
+    color: p.color,
+    stock: p.stock,
+    desc: p.description,
+    image: p.image ?? undefined,
+  };
+}
+
+function toOrder(o: ApiOrder): Order {
+  return {
+    id: o.code,
+    user: o.username,
+    total: o.total,
+    count: o.count,
+    date: new Date(o.createdAt).toLocaleString("vi-VN"),
+  };
+}
 
 type StoreValue = {
   ready: boolean;
+  loadingProducts: boolean;
+  apiError: string;
   user: User | null;
-  login: (username: string, password: string) => User | null;
+  login: (username: string, password: string) => Promise<string | null>;
+  register: (username: string, password: string) => Promise<string | null>;
   logout: () => void;
   products: Product[];
-  addProduct: (p: Omit<Product, "id">) => void;
-  deleteProduct: (id: number) => void;
+  addProduct: (p: Omit<Product, "id">) => Promise<string | null>;
+  deleteProduct: (id: number) => Promise<string | null>;
   cart: CartLine[];
   cartCount: number;
   cartTotal: number;
   addToCart: (id: number) => void;
   setQty: (id: number, qty: number) => void;
   removeFromCart: (id: number) => void;
-  checkout: () => Order | null;
+  checkout: () => Promise<{ order?: Order; error?: string }>;
   orders: Order[];
 };
 
@@ -49,62 +126,119 @@ function save(key: string, value: unknown) {
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    // trình duyệt chặn lưu trữ thì bỏ qua, web vẫn chạy bình thường
+    // trình duyệt chặn lưu trữ thì bỏ qua
   }
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
-  const [user, setUser] = useState<User | null>(null);
+  const [loadingProducts, setLoadingProducts] = useState(true);
+  const [apiError, setApiError] = useState("");
+  const [auth, setAuth] = useState<AuthReply | null>(null);
   const [products, setProducts] = useState<Product[]>(initialProducts);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
 
-  // Đọc dữ liệu đã lưu khi trang vừa mở
-  useEffect(() => {
-    setUser(load<User | null>("shop_user", null));
-    setProducts(load<Product[]>("shop_products", initialProducts));
-    setCart(load<CartLine[]>("shop_cart", []));
-    setOrders(load<Order[]>("shop_orders", []));
-    setReady(true);
+  const user = auth ? auth.user : null;
+  const token = auth ? auth.token : undefined;
+
+  const refreshProducts = useCallback(async () => {
+    const r = await api<ApiProduct[]>("/api/products");
+    if (r.ok && r.data) {
+      const list = r.data.map(toProduct);
+      setProducts(list);
+      setCart((prev) => prev.filter((l) => list.some((p) => p.id === l.id)));
+      setApiError("");
+    } else {
+      setApiError(errorText(r, "Không tải được sản phẩm"));
+    }
+    setLoadingProducts(false);
   }, []);
 
+  const refreshOrders = useCallback(async (t: string | undefined) => {
+    if (!t) {
+      setOrders([]);
+      return;
+    }
+    const r = await api<ApiOrder[]>("/api/orders", "GET", undefined, t);
+    if (r.ok && r.data) setOrders(r.data.map(toOrder));
+  }, []);
+
+  // Khi trang vừa mở: đọc đăng nhập và giỏ hàng đã lưu, rồi lấy sản phẩm từ backend
   useEffect(() => {
-    if (ready) save("shop_user", user);
-  }, [user, ready]);
+    setAuth(load<AuthReply | null>("shop_auth", null));
+    setCart(load<CartLine[]>("shop_cart", []));
+    setReady(true);
+    void refreshProducts();
+  }, [refreshProducts]);
+
   useEffect(() => {
-    if (ready) save("shop_products", products);
-  }, [products, ready]);
+    if (ready) save("shop_auth", auth);
+  }, [auth, ready]);
   useEffect(() => {
     if (ready) save("shop_cart", cart);
   }, [cart, ready]);
+
   useEffect(() => {
-    if (ready) save("shop_orders", orders);
-  }, [orders, ready]);
+    if (ready) void refreshOrders(token);
+  }, [token, ready, refreshOrders]);
 
-  const login = useCallback((username: string, password: string): User | null => {
-    const found = ACCOUNTS.find(
-      (a) => a.username === username.trim().toLowerCase() && a.password === password,
-    );
-    if (!found) return null;
-    const u: User = { username: found.username, role: found.role };
-    setUser(u);
-    return u;
+  const login = useCallback(async (username: string, password: string): Promise<string | null> => {
+    const r = await api<AuthReply>("/api/auth/login", "POST", { username, password });
+    if (r.ok && r.data) {
+      setAuth(r.data);
+      return null;
+    }
+    return errorText(r, "Đăng nhập không thành công");
   }, []);
 
-  const logout = useCallback(() => setUser(null), []);
-
-  const addProduct = useCallback((p: Omit<Product, "id">) => {
-    setProducts((prev) => {
-      const nextId = prev.reduce((m, x) => Math.max(m, x.id), 0) + 1;
-      return [{ ...p, id: nextId }, ...prev];
-    });
+  const register = useCallback(async (username: string, password: string): Promise<string | null> => {
+    const r = await api<AuthReply>("/api/auth/register", "POST", { username, password });
+    if (r.ok && r.data) {
+      setAuth(r.data);
+      return null;
+    }
+    return errorText(r, "Đăng ký không thành công");
   }, []);
 
-  const deleteProduct = useCallback((id: number) => {
-    setProducts((prev) => prev.filter((p) => p.id !== id));
-    setCart((prev) => prev.filter((l) => l.id !== id));
+  const logout = useCallback(() => {
+    setAuth(null);
+    setOrders([]);
   }, []);
+
+  const addProduct = useCallback(
+    async (p: Omit<Product, "id">): Promise<string | null> => {
+      const r = await api<ApiProduct>(
+        "/api/products",
+        "POST",
+        {
+          name: p.name,
+          price: p.price,
+          category: p.category,
+          emoji: p.emoji,
+          color: p.color,
+          stock: p.stock,
+          description: p.desc,
+          image: p.image ?? null,
+        },
+        token,
+      );
+      if (!r.ok) return errorText(r, "Không thêm được sản phẩm");
+      await refreshProducts();
+      return null;
+    },
+    [token, refreshProducts],
+  );
+
+  const deleteProduct = useCallback(
+    async (id: number): Promise<string | null> => {
+      const r = await api<unknown>("/api/products/" + id, "DELETE", undefined, token);
+      if (!r.ok) return errorText(r, "Không xóa được sản phẩm");
+      await refreshProducts();
+      return null;
+    },
+    [token, refreshProducts],
+  );
 
   const addToCart = useCallback(
     (id: number) => {
@@ -146,30 +280,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [cart, products],
   );
 
-  const checkout = useCallback((): Order | null => {
-    if (!user || cart.length === 0) return null;
-    const order: Order = {
-      id: "DH" + Date.now().toString().slice(-6),
-      user: user.username,
-      total: cartTotal,
-      count: cartCount,
-      date: new Date().toLocaleString("vi-VN"),
-    };
-    setProducts((prev) =>
-      prev.map((p) => {
-        const line = cart.find((l) => l.id === p.id);
-        return line ? { ...p, stock: Math.max(p.stock - line.qty, 0) } : p;
-      }),
+  const checkout = useCallback(async (): Promise<{ order?: Order; error?: string }> => {
+    if (!auth || cart.length === 0) return { error: "Bạn cần đăng nhập và có sản phẩm trong giỏ." };
+    const r = await api<{ code: string; total: number; count: number; createdAt: string }>(
+      "/api/orders",
+      "POST",
+      { items: cart.map((l) => ({ productId: l.id, qty: l.qty })) },
+      auth.token,
     );
-    setOrders((prev) => [order, ...prev]);
+    if (!r.ok || !r.data) return { error: errorText(r, "Đặt hàng không thành công") };
+    const order: Order = {
+      id: r.data.code,
+      user: auth.user.username,
+      total: r.data.total,
+      count: r.data.count,
+      date: new Date(r.data.createdAt).toLocaleString("vi-VN"),
+    };
     setCart([]);
-    return order;
-  }, [user, cart, cartTotal, cartCount]);
+    await refreshProducts();
+    await refreshOrders(auth.token);
+    return { order };
+  }, [auth, cart, refreshProducts, refreshOrders]);
 
   const value: StoreValue = {
     ready,
+    loadingProducts,
+    apiError,
     user,
     login,
+    register,
     logout,
     products,
     addProduct,

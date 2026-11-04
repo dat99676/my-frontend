@@ -13,6 +13,18 @@ const focus =
 export default function CartPage() {
   const { cart, products, cartTotal, cartCount, setQty, removeFromCart, checkout, user } = useStore();
   const [done, setDone] = useState<Order | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleCheckout() {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    const result = await checkout();
+    setBusy(false);
+    if (result.order) setDone(result.order);
+    else setError(result.error ?? "Đặt hàng không thành công.");
+  }
 
   const lines = cart
     .map((l) => ({ line: l, product: products.find((p) => p.id === l.id) }))
@@ -107,12 +119,20 @@ export default function CartPage() {
             </dl>
 
             {user ? (
-              <button
-                onClick={() => setDone(checkout())}
-                className={`mt-6 w-full rounded-full bg-[#2B4EFF] py-3 font-semibold text-white transition hover:bg-[#1F3BD6] ${focus}`}
-              >
-                Đặt hàng
-              </button>
+              <div>
+                {error && (
+                  <p role="alert" className="mt-5 rounded-xl bg-[#FDE8E4] px-4 py-3 text-sm text-[#9B2C1C]">
+                    {error}
+                  </p>
+                )}
+                <button
+                  onClick={handleCheckout}
+                  disabled={busy}
+                  className={`mt-6 w-full rounded-full bg-[#2B4EFF] py-3 font-semibold text-white transition hover:bg-[#1F3BD6] disabled:opacity-60 ${focus}`}
+                >
+                  {busy ? "Đang đặt hàng..." : "Đặt hàng"}
+                </button>
+              </div>
             ) : (
               <div className="mt-6">
                 <p className="text-sm text-[#101828]/70">Bạn cần đăng nhập để đặt hàng.</p>

@@ -25,6 +25,7 @@ export default function AdminPage() {
   const [desc, setDesc] = useState("");
   const [error, setError] = useState("");
   const [added, setAdded] = useState("");
+  const [busy, setBusy] = useState(false);
 
   if (!ready) {
     return <p className="mx-auto max-w-5xl px-6 py-20 text-[#101828]/60">Đang tải...</p>;
@@ -49,8 +50,9 @@ export default function AdminPage() {
 
   const revenue = orders.reduce((sum, o) => sum + o.total, 0);
 
-  function handleAdd(e: FormEvent) {
+  async function handleAdd(e: FormEvent) {
     e.preventDefault();
+    if (busy) return;
     const priceNum = Number(price);
     const stockNum = Number(stock);
     if (name.trim() === "") {
@@ -65,7 +67,8 @@ export default function AdminPage() {
       setError("Số lượng tồn kho phải là số nguyên từ 0 trở lên.");
       return;
     }
-    addProduct({
+    setBusy(true);
+    const err = await addProduct({
       name: name.trim(),
       price: priceNum,
       stock: stockNum,
@@ -75,6 +78,11 @@ export default function AdminPage() {
       desc: desc.trim() || "Sản phẩm mới của cửa hàng.",
       image: image.trim() || undefined,
     });
+    setBusy(false);
+    if (err) {
+      setError(err);
+      return;
+    }
     setAdded(name.trim());
     setError("");
     setName("");
@@ -87,7 +95,7 @@ export default function AdminPage() {
     <div className="mx-auto max-w-6xl px-6 py-14">
       <h1 className="font-[family-name:var(--font-display)] text-6xl font-bold">Quản trị cửa hàng</h1>
       <p className="mt-3 text-[#101828]/70">
-        Đăng nhập với tài khoản <strong>{user.username}</strong>. Mọi thay đổi hiện ngay trên trang bán hàng.
+        Đăng nhập với tài khoản <strong>{user.username}</strong>. Mọi thay đổi được lưu vào cơ sở dữ liệu trên máy chủ.
       </p>
 
       <dl className="mt-10 grid gap-4 sm:grid-cols-3">
@@ -177,9 +185,10 @@ export default function AdminPage() {
 
           <button
             type="submit"
-            className={`mt-6 w-full rounded-full bg-[#2B4EFF] py-3 font-semibold text-white transition hover:bg-[#1F3BD6] ${focus}`}
+            disabled={busy}
+            className={`mt-6 w-full rounded-full bg-[#2B4EFF] py-3 font-semibold text-white transition hover:bg-[#1F3BD6] disabled:opacity-60 ${focus}`}
           >
-            Thêm sản phẩm
+            {busy ? "Đang lưu..." : "Thêm sản phẩm"}
           </button>
         </form>
 
@@ -197,8 +206,10 @@ export default function AdminPage() {
                   </p>
                 </div>
                 <button
-                  onClick={() => {
-                    if (window.confirm("Xóa sản phẩm " + p.name + "?")) deleteProduct(p.id);
+                  onClick={async () => {
+                    if (!window.confirm("Xóa sản phẩm " + p.name + "?")) return;
+                    const err = await deleteProduct(p.id);
+                    if (err) setError(err);
                   }}
                   className={`rounded-full border border-[#9B2C1C]/40 px-4 py-1.5 text-sm font-semibold text-[#9B2C1C] hover:bg-[#9B2C1C] hover:text-white ${focus}`}
                 >
